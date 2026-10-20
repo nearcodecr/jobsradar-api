@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpResponse, http } from "msw";
@@ -116,6 +116,41 @@ describe("WellfoundAdapter.getCompany", () => {
     expect(second.ok).toBe(false);
     if (!second.ok) expect(second.error.kind).toBe("blocked");
     expect(requestCount).toBe(1);
+  });
+
+  it("renovar storageState.json cierra el breaker abierto por blocked", async () => {
+    const storageStatePath = join(dir, "storageState.json");
+    writeFileSync(storageStatePath, JSON.stringify({ cookies: [{ name: "cf_clearance", value: "vencida", domain: ".wellfound.com", path: "/" }] }));
+
+    let requestCount = 0;
+    server.use(
+      http.get("https://wellfound.com/company/vaulfi-1", ({ request }) => {
+        requestCount++;
+        if (request.headers.get("cookie")?.includes("vencida")) {
+          return new HttpResponse("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } });
+        }
+        return HttpResponse.text(peopleAuthHtml);
+      }),
+    );
+
+    const breaker = new CircuitBreaker();
+    const adapter = testAdapter(testHttpClient(storageStatePath), breaker);
+
+    await adapter.getCompany("vaulfi-1");
+    expect(breaker.isOpen()).toBe(true);
+
+    // Sin renovar, el breaker sigue abierto y no se toca la red.
+    await adapter.getCompany("vaulfi-1");
+    expect(requestCount).toBe(1);
+
+    writeFileSync(storageStatePath, JSON.stringify({ cookies: [{ name: "cf_clearance", value: "nueva", domain: ".wellfound.com", path: "/" }] }));
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(storageStatePath, later, later);
+
+    const renewed = await adapter.getCompany("vaulfi-1");
+    expect(renewed.ok).toBe(true);
+    expect(breaker.isOpen()).toBe(false);
+    expect(requestCount).toBe(2);
   });
 
   it("listCompanies también respeta el breaker ya abierto por getCompany", async () => {

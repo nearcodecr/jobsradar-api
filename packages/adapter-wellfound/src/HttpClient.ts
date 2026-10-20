@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { err, ok } from "@jobsradar/domain";
 import type { ExtractionError, Result } from "@jobsradar/domain";
 import { buildCookieHeader, loadStorageState } from "./session.js";
@@ -51,6 +52,12 @@ export class HttpClient {
     this.sleep = options.sleep ?? defaultSleep;
     this.random = options.random ?? Math.random;
     this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  // Cambia cada vez que se reescribe storageState.json (renovación manual).
+  sessionVersion(): number | null {
+    if (!this.storageStatePath || !existsSync(this.storageStatePath)) return null;
+    return statSync(this.storageStatePath).mtimeMs;
   }
 
   async get(url: string, options: HttpGetOptions = {}): Promise<Result<string, ExtractionError>> {
@@ -110,7 +117,17 @@ export class HttpClient {
     let response: Response;
     try {
       response = await this.fetchImpl(url, { headers: this.buildHeaders(options) });
-    } catch {
+    } catch (error) {
+      // Con cookies vencidas Wellfound no responde 403: redirige en loop y
+      // undici corta con "redirect count exceeded". Es blocked (sección 6.2:
+      // sesión expirada), no rate_limited — reintentar no lo arregla.
+      if ((error as { cause?: { message?: string } }).cause?.message === "redirect count exceeded") {
+        return err({
+          kind: "blocked",
+          retryable: true,
+          detail: "Sesión de Wellfound vencida (loop de redirecciones) — renovar storageState.json",
+        });
+      }
       // Fallo de red (DNS, conexión, timeout) — el kind más cercano de los
       // 4 que define ARCHITECTURE.md sección 4.2 es rate_limited: es
       // retryable y "probá de nuevo más tarde" es la acción correcta,

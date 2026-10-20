@@ -15,6 +15,8 @@ import { buildCompanyProfileUrl, buildRoleListingUrl } from "./urlBuilder.js";
 // adaptador decide cuándo renovar la sesión (ver comentario en getCompany).
 
 export class WellfoundAdapter implements JobSourcePort {
+  private sessionVersionAtTrip: number | null = null;
+
   constructor(
     private readonly http: HttpClient,
     private readonly breaker: CircuitBreaker,
@@ -26,7 +28,7 @@ export class WellfoundAdapter implements JobSourcePort {
     criteria: SearchCriteria,
     page: number,
   ): Promise<Result<{ companies: Company[]; hasMore: boolean }, ExtractionError>> {
-    if (this.breaker.isOpen()) return err(this.breaker.getLastError()!);
+    if (this.isBlocked()) return err(this.breaker.getLastError()!);
 
     const url = buildRoleListingUrl(criteria, page);
     // El listado no necesita sesión (Fase 0) — withSession queda en false.
@@ -45,7 +47,7 @@ export class WellfoundAdapter implements JobSourcePort {
   }
 
   async getCompany(slug: string): Promise<Result<Company, ExtractionError>> {
-    if (this.breaker.isOpen()) return err(this.breaker.getLastError()!);
+    if (this.isBlocked()) return err(this.breaker.getLastError()!);
 
     const url = buildCompanyProfileUrl(slug);
     // /company/{slug} sí necesita sesión (Fase 0) — si no hay storageState
@@ -97,7 +99,18 @@ export class WellfoundAdapter implements JobSourcePort {
   // ya se reintenta dentro de HttpClient, not_found/parse_failed son
   // errores de una sola empresa, no del acceso global.
   private tripOnBlock(error: ExtractionError): void {
-    if (error.kind === "blocked") this.breaker.trip(error);
+    if (error.kind !== "blocked") return;
+    this.breaker.trip(error);
+    this.sessionVersionAtTrip = this.http.sessionVersion();
+  }
+
+  // Nadie más llama a breaker.reset(): sin esto, tras renovar la sesión el
+  // worker seguía bloqueado hasta reiniciarse.
+  private isBlocked(): boolean {
+    if (this.breaker.isOpen() && this.http.sessionVersion() !== this.sessionVersionAtTrip) {
+      this.breaker.reset();
+    }
+    return this.breaker.isOpen();
   }
 
   // Fase 8 (sección 11): "extracción vacía" es específicamente

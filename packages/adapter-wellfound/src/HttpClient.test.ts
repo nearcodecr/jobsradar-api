@@ -149,6 +149,26 @@ describe("HttpClient.get", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("rate_limited");
   });
+
+  // Una sesión vencida no da 403: Wellfound redirige en loop y undici
+  // corta con "redirect count exceeded" (visto en vivo, 2026-10-20).
+  it("un loop de redirecciones (sesión vencida) es blocked, sin reintentar", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      throw new TypeError("fetch failed", { cause: new Error("redirect count exceeded") });
+    }) as typeof fetch;
+
+    const client = testClient({ fetchImpl, maxRetries: 3 });
+    const result = await client.get("https://wellfound.com/company/vaulfi-1", { withSession: true });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe("blocked");
+      if (result.error.kind === "blocked") expect(result.error.detail).toMatch(/sesión/i);
+    }
+    expect(calls).toBe(1);
+  });
 });
 
 describe("HttpClient — espaciado entre requests", () => {
