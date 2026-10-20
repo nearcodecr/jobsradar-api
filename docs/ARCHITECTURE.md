@@ -270,6 +270,27 @@ que el parser esté roto.
 | Circuit breaker | Pausa toda la búsqueda al primer captcha |
 | Sesión | `storageState` de Playwright en disco (cookies, incluyendo `cf_clearance`), login manual una vez — **obligatoria** para pasar el challenge de Cloudflare en `/company/{slug}` (403 confirmado en Fase 0 sin ella; 200 OK confirmado con ella, vía `fetch` plano, sin necesidad de navegador por request). `cf_clearance` tiene un TTL desconocido y posiblemente atado a IP/fingerprint — pendiente medir en Fase 4 cuánto dura y si sobrevive un cambio de IP del worker; al expirar, tratar como `blocked` y disparar una renovación de sesión vía `BrowserClient` |
 
+**Sesión vencida = `blocked` (2026-10-20).** Con cookies vencidas Wellfound no
+responde el 403 `Cf-Mitigated` esperado: redirige en loop y `fetch` corta con
+"redirect count exceeded". `HttpClient` lo trataba como fallo de red →
+`rate_limited` (4 intentos inútiles y un mensaje engañoso en la UI: "6
+empresa(s) no se pudieron enriquecer: rate_limited"). Ahora es `blocked` con
+detalle "Sesión de Wellfound vencida", sin reintentos. Además
+`WellfoundAdapter` cierra el circuit breaker solo cuando `storageState.json`
+cambia (mtime distinto al del momento del bloqueo): antes nadie llamaba a
+`breaker.reset()`, y tras renovar la sesión el worker seguía bloqueado hasta
+reiniciarse.
+
+**Dos bugs encontrados al armar la guía de usuario (2026-10-20).** (1) Un
+`company-detail` con cache-hit terminaba sin publicar `company.updated`: como
+`company.found` solo lleva datos del listado, las empresas cacheadas se veían
+en pantalla sin mercado/sitio/LinkedIn/founders aunque Postgres (y el CSV) los
+tuvieran. Ahora el cache-hit publica `company.updated` con lo cacheado. (2)
+`filterCompaniesByLocation` (`/export?location=`) había quedado atrás de
+`ResultsTable`: no dejaba pasar roles remotos sin ciudad ni matcheaba
+"Remote", así que con "United" la tabla mostraba 2 empresas y el CSV 1. Ahora
+aplica la misma regla que la tabla.
+
 ---
 
 ## 7. Contrato de API
@@ -564,20 +585,21 @@ actualizado en ambos repos; ver también `nearcodecr/nearcode-infra` —
 Terraform + Cloud Build para Cloud Run, trabajo de onboarding de Dorian
 Cortes ya mergeado a `main` en los dos repos). Un primer intento de arreglo
 mantuvo el paquete bajo el scope personal y agregó un `CONTRACTS_PUBLISH_TOKEN`
-dedicado para publicar (mismo patrón que `JRW_GH_PACKAGES_TOKEN` para leer).
-Ese enfoque quedó revertido antes de cargarse el secret: el paquete se
-renombró en su lugar a **`@nearcodecr/jobsradar-contracts`**, para que su
-scope vuelva a coincidir con el owner real del repo. Con eso, "publicar es
-una acción sobre el propio repo" vuelve a ser cierto — el `GITHUB_TOKEN`
-automático del workflow alcanza de nuevo para publicar.
+dedicado para publicar (mismo patrón que `JRW_GH_PACKAGES_TOKEN` para leer,
+mencionado más abajo). Ese enfoque quedó revertido antes de cargarse el
+secret: el paquete se renombró en su lugar a **`@nearcodecr/jobsradar-contracts`**,
+para que su scope vuelva a coincidir con el owner real del repo. Con eso,
+"publicar es una acción sobre el propio repo" vuelve a ser cierto para
+`jobsradar-api` — el `GITHUB_TOKEN` automático del workflow alcanza de nuevo.
 
-Esto NO elimina la necesidad de un PAT para leer el paquete fuera de GitHub
-Actions -- `JRW_GH_PACKAGES_TOKEN` en Secret Manager sigue haciendo falta
-para el build de Cloud Build en jobsradar-web, que no tiene un `GITHUB_TOKEN`
-automático propio. Lo que arregla el rename es el 403 en sí: el acceso de
-lectura a un paquete de GitHub Packages sigue el acceso de colaborador al
-repo que lo publica, y esa regla solo aplica una vez que el paquete
-pertenece de verdad a ese repo.
+Esto NO elimina la necesidad de un PAT para leer el paquete desde fuera de
+GitHub Actions (Cloud Build no tiene un `GITHUB_TOKEN` automático; `JRW_GH_PACKAGES_TOKEN`
+en Secret Manager sigue haciendo falta) ni desde el propio CI de
+`jobsradar-web` (`JOBSRADAR_API_RO_TOKEN`, sección de abajo) — GitHub Actions
+solo entrega su token efímero al repo que corre el workflow, nunca a otro. Lo
+que arregla el rename es el 403 en sí: el acceso de lectura a un paquete de
+GitHub Packages sigue el acceso de colaborador al repo que lo publica, y esa
+regla solo aplica una vez que el paquete pertenece de verdad a ese repo.
 
 Del lado de `jobsradar-web`, el workaround de Fase 1 (clonar `jobsradar-api`
 como sibling en CI y symlinkear `packages/contracts/dist` para resolver el
