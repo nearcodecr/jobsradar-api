@@ -37,9 +37,23 @@ describe("filterCompaniesByLocation", () => {
     expect(result.map((c) => c.slug)).toEqual(["a"]);
   });
 
-  it("una empresa sin ningún job con location matcheable queda afuera", () => {
-    const companies = [company("a", [null]), company("b", ["San Mateo"])];
+  it("una empresa sin ningún job con location matcheable (ni remoto sin ubicación) queda afuera", () => {
+    const onsiteNoLocation = company("a", [null]);
+    onsiteNoLocation.jobs[0]!.isRemote = false;
+    const companies = [onsiteNoLocation, company("b", ["San Mateo"]), company("c", ["Zurich"])];
     expect(filterCompaniesByLocation(companies, "san mateo").map((c) => c.slug)).toEqual(["b"]);
+  });
+
+  // Misma regla que ResultsTable (jobsradar-web): lo exportado tiene que ser
+  // lo que se ve en pantalla (sección 7).
+  it("un rol remoto sin ubicación siempre pasa el filtro, igual que en la tabla", () => {
+    const companies = [company("a", [null]), company("b", ["Zurich"])];
+    expect(filterCompaniesByLocation(companies, "united").map((c) => c.slug)).toEqual(["a"]);
+  });
+
+  it("filtrar por 'remote' incluye roles remotos aunque su location sea una ciudad", () => {
+    const companies = [company("a", ["Zurich"])];
+    expect(filterCompaniesByLocation(companies, "Remote").map((c) => c.slug)).toEqual(["a"]);
   });
 });
 

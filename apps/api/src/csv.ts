@@ -45,8 +45,14 @@ const COLUMN_LABELS: Record<(typeof COLUMNS)[number], string> = {
 export function filterCompaniesByLocation(companies: Company[], location: string | undefined): Company[] {
   const needle = location?.trim().toLowerCase();
   if (!needle) return companies;
+  // Misma regla que ResultsTable en jobsradar-web: un rol remoto sin ciudad
+  // siempre pasa, y los remotos también matchean "Remote".
   return companies.filter((company) =>
-    company.jobs.some((job) => job.location?.toLowerCase().includes(needle)),
+    company.jobs.some(
+      (job) =>
+        (job.isRemote && !job.location) ||
+        [job.location, job.isRemote ? "Remote" : null].some((value) => value?.toLowerCase().includes(needle)),
+    ),
   );
 }
 
