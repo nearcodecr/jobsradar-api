@@ -116,6 +116,29 @@ describe("processCompanyDetail", () => {
     expect(getCompany).not.toHaveBeenCalled();
   });
 
+  // company.found lleva solo los datos del listado: sin este evento, una
+  // empresa cacheada se veía sin mercado/sitio/founders en pantalla aunque
+  // la base (y el CSV) los tuvieran.
+  it("un cache-hit publica company.updated con los datos cacheados", async () => {
+    const searchId = await repository.create(criteria);
+    await repository.attachCompany(searchId, enrichedCompany(), 1);
+
+    const adapter: JobSourcePort = {
+      listCompanies: async () => ({ ok: true, value: { companies: [], hasMore: false } }),
+      getCompany: vi.fn(),
+    };
+    const events = fakeEvents();
+
+    await processCompanyDetail({ searchId, slug: "vaulfi-1" }, { adapter, repository, events });
+
+    const updated = events.published.find((e) => e.type === "company.updated");
+    expect(updated).toBeDefined();
+    if (updated?.type === "company.updated") {
+      expect(updated.company.slug).toBe("vaulfi-1");
+      expect(updated.company.founders.length).toBeGreaterThan(0);
+    }
+  });
+
   it("blocked se loguea, pausa la búsqueda y publica 'paused'", async () => {
     const searchId = await repository.create(criteria);
     await repository.attachCompany(searchId, baseCompany(), 1);

@@ -54,6 +54,9 @@ export async function processCompanyDetail(data: CompanyDetailJobData, deps: Com
     // como encolado (recordCompanyDetailEnqueued), así que sin este
     // contrapeso el conteo quedaría descuadrado para siempre y
     // "enrichment.done" nunca se publicaría.
+    // company.found solo trae datos del listado: sin este evento la UI no
+    // ve mercado/sitio/founders de una empresa cacheada.
+    await deps.events.publish(data.searchId, { type: "company.updated", company: cached });
     await finishEnrichmentAttempt(data.searchId, deps);
     return;
   }
