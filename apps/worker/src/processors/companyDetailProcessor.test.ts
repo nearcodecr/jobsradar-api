@@ -139,7 +139,9 @@ describe("processCompanyDetail", () => {
     }
   });
 
-  it("blocked se loguea, pausa la búsqueda y publica 'paused'", async () => {
+  // Sesión vencida: solo frena el enriquecimiento, no la búsqueda — el
+  // listado no necesita sesión y sigue (2026-10-21).
+  it("blocked se loguea y publica company.failed, sin pausar la búsqueda", async () => {
     const searchId = await repository.create(criteria);
     await repository.attachCompany(searchId, baseCompany(), 1);
 
@@ -155,8 +157,9 @@ describe("processCompanyDetail", () => {
     ).resolves.toBeUndefined();
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining("blocked"));
-    expect((await repository.getSnapshot(searchId)).status).toBe("paused");
-    expect(events.published[0]).toMatchObject({ type: "paused", reason: "blocked" });
+    expect((await repository.getSnapshot(searchId)).status).not.toBe("paused");
+    expect(events.published).toContainEqual({ type: "company.failed", slug: "vaulfi-1", reason: "blocked" });
+    expect(events.published.some((e) => e.type === "paused")).toBe(false);
   });
 
   it("si Wellfound no trae linkedinUrl pero hay websiteUrl, consulta el fallback y lo persiste — pedido explícito del usuario", async () => {
@@ -347,7 +350,9 @@ describe("processCompanyDetail", () => {
       expect(events.published).toContainEqual({ type: "enrichment.done" });
     });
 
-    it("un fallo 'blocked' NO cuenta como completado — el contador queda esperando un reintento", async () => {
+    // Nadie reintenta un blocked: si no contara, enrichment.done nunca
+    // llegaría y el spinner del frontend no se apagaría.
+    it("un fallo 'blocked' cuenta como intento resuelto", async () => {
       const searchId = await repository.create(criteria);
       await repository.attachCompany(searchId, baseCompany(), 1);
       await repository.recordCompanyDetailEnqueued(searchId);
@@ -359,7 +364,7 @@ describe("processCompanyDetail", () => {
 
       await processCompanyDetail({ searchId, slug: "vaulfi-1" }, { adapter, repository, events: fakeEvents() });
 
-      expect(await repository.getCompanyDetailCounts(searchId)).toEqual({ enqueued: 1, completed: 0 });
+      expect(await repository.getCompanyDetailCounts(searchId)).toEqual({ enqueued: 1, completed: 1 });
     });
   });
 });

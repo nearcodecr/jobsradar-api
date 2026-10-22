@@ -153,19 +153,14 @@ describe("WellfoundAdapter.getCompany", () => {
     expect(requestCount).toBe(2);
   });
 
-  it("listCompanies también respeta el breaker ya abierto por getCompany", async () => {
+  // El listado no necesita sesión (Fase 0): una sesión vencida no debe
+  // dejar las búsquedas vacías (2026-10-21).
+  it("un blocked de getCompany (sesión) NO frena listCompanies", async () => {
     server.use(
       http.get("https://wellfound.com/company/vaulfi-1", () =>
         HttpResponse.text("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } }),
       ),
-    );
-
-    let listingRequestCount = 0;
-    server.use(
-      http.get("https://wellfound.com/role/r/backend-engineer", () => {
-        listingRequestCount++;
-        return HttpResponse.text(roleListingHtml);
-      }),
+      http.get("https://wellfound.com/role/r/backend-engineer", () => HttpResponse.text(roleListingHtml)),
     );
 
     const breaker = new CircuitBreaker();
@@ -178,9 +173,32 @@ describe("WellfoundAdapter.getCompany", () => {
       { jobTitle: "Backend Engineer", remoteOnly: true, targetCompanies: 50 },
       1,
     );
-    expect(listResult.ok).toBe(false);
-    expect(listingRequestCount).toBe(0);
+    expect(listResult.ok).toBe(true);
   });
+
+  it("un blocked del listado (sin sesión) frena también getCompany", async () => {
+    let profileRequests = 0;
+    server.use(
+      http.get("https://wellfound.com/role/r/backend-engineer", () =>
+        HttpResponse.text("challenge", { status: 403, headers: { "cf-mitigated": "challenge" } }),
+      ),
+      http.get("https://wellfound.com/company/vaulfi-1", () => {
+        profileRequests++;
+        return HttpResponse.text(peopleAuthHtml);
+      }),
+    );
+
+    const breaker = new CircuitBreaker();
+    const adapter = testAdapter(testHttpClient(), breaker);
+
+    await adapter.listCompanies({ jobTitle: "Backend Engineer", remoteOnly: true, targetCompanies: 50 }, 1);
+    expect(breaker.isOpen()).toBe(true);
+
+    const company = await adapter.getCompany("vaulfi-1");
+    expect(company.ok).toBe(false);
+    expect(profileRequests).toBe(0);
+  });
+
 });
 
 describe("WellfoundAdapter — métricas de extracción (Fase 8)", () => {

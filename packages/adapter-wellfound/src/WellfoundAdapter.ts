@@ -16,6 +16,7 @@ import { buildCompanyProfileUrl, buildRoleListingUrl } from "./urlBuilder.js";
 
 export class WellfoundAdapter implements JobSourcePort {
   private sessionVersionAtTrip: number | null = null;
+  private trippedBySession = false;
 
   constructor(
     private readonly http: HttpClient,
@@ -28,13 +29,14 @@ export class WellfoundAdapter implements JobSourcePort {
     criteria: SearchCriteria,
     page: number,
   ): Promise<Result<{ companies: Company[]; hasMore: boolean }, ExtractionError>> {
-    if (this.isBlocked()) return err(this.breaker.getLastError()!);
+    // Un bloqueo de sesión no frena el listado: /role/r no la necesita.
+    if (this.isBlocked() && !this.trippedBySession) return err(this.breaker.getLastError()!);
 
     const url = buildRoleListingUrl(criteria, page);
     // El listado no necesita sesión (Fase 0) — withSession queda en false.
     const htmlResult = await this.http.get(url);
     if (!htmlResult.ok) {
-      this.tripOnBlock(htmlResult.error);
+      this.tripOnBlock(htmlResult.error, false);
       return err(htmlResult.error);
     }
 
@@ -55,14 +57,14 @@ export class WellfoundAdapter implements JobSourcePort {
     // el challenge (`blocked`), tal como se confirmó en Fase 0.
     const htmlResult = await this.http.get(url, { withSession: true });
     if (!htmlResult.ok) {
-      this.tripOnBlock(htmlResult.error);
+      this.tripOnBlock(htmlResult.error, true);
       return err(htmlResult.error);
     }
 
     const parsed = parseCompanyProfile(htmlResult.value);
     this.recordExtraction(parsed);
     if (!parsed.ok) {
-      this.tripOnBlock(parsed.error);
+      this.tripOnBlock(parsed.error, true);
       return err(parsed.error);
     }
 
@@ -98,9 +100,10 @@ export class WellfoundAdapter implements JobSourcePort {
   // "blocked" es la única señal que abre el breaker (AD-09): rate_limited
   // ya se reintenta dentro de HttpClient, not_found/parse_failed son
   // errores de una sola empresa, no del acceso global.
-  private tripOnBlock(error: ExtractionError): void {
+  private tripOnBlock(error: ExtractionError, bySession: boolean): void {
     if (error.kind !== "blocked") return;
     this.breaker.trip(error);
+    this.trippedBySession = bySession;
     this.sessionVersionAtTrip = this.http.sessionVersion();
   }
 

@@ -50,8 +50,8 @@ export interface SearchRepositoryPort {
   // el listado ("done" ≠ "todo enriquecido", sección 10). search-list llama
   // a recordCompanyDetailEnqueued una vez por cada company-detail que
   // encola; company-detail llama a recordCompanyDetailCompleted al
-  // terminar cada job (éxito o company.failed, nunca en "blocked" — ver
-  // companyDetailProcessor.ts). Cuando enqueued === completed Y el listado
+  // terminar cada job (éxito, cache-hit o company.failed, incluido
+  // "blocked"). Cuando enqueued === completed Y el listado
   // ya es terminal, se publica el evento "enrichment.done".
   getStatus(searchId: string): Promise<SearchSnapshot["status"]>;
   recordCompanyDetailEnqueued(searchId: string): Promise<void>;

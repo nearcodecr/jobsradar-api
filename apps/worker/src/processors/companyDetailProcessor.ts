@@ -28,8 +28,8 @@ export interface CompanyDetailDeps {
 
 // Pedido explícito del usuario ("el spinner no se puede dejar hasta que
 // cargue todo") — ver el comentario en SearchRepositoryPort. Se llama al
-// terminar CUALQUIER intento resuelto (éxito, cache-hit, o error que no
-// sea "blocked" — ver abajo por qué "blocked" queda afuera). Publica
+// terminar CUALQUIER intento resuelto (éxito, cache-hit o error, incluido
+// "blocked"). Publica
 // "enrichment.done" solo si además el listado ya es terminal ("done"):
 // mientras el listado siga corriendo, puede faltar encolar más
 // company-detail todavía, así que llegar a enqueued===completed acá no
@@ -63,29 +63,21 @@ export async function processCompanyDetail(data: CompanyDetailJobData, deps: Com
 
   const result = await deps.adapter.getCompany(data.slug);
   if (!result.ok) {
-    if (result.error.kind === "blocked") {
-      log(`[company-detail] slug=${data.slug} blocked — falta sesión válida, renovar storageState.json manualmente`);
-      // blocked afecta a toda la búsqueda, no solo a esta empresa (Fase 4:
-      // el circuit breaker del adaptador ya frenó al resto de esta cola).
-      // NO cuenta como completado a propósito: no hubo resolución real,
-      // hay que reintentar. Como esto pausa toda la búsqueda, el spinner
-      // igual deja de mostrarse (status "paused" ≠ "running"/"done" en
-      // App.tsx) sin depender de que este contador cierre.
-      await deps.repository.updateStatus(data.searchId, "paused");
-      await deps.events.publish(data.searchId, {
-        type: "paused",
-        reason: "blocked",
-        resumeAt: new Date(Date.now() + 60_000).toISOString(),
-      });
-    } else {
-      log(`[company-detail] slug=${data.slug} error=${result.error.kind}`);
-      await deps.events.publish(data.searchId, {
-        type: "company.failed",
-        slug: data.slug,
-        reason: result.error.kind,
-      });
-      await finishEnrichmentAttempt(data.searchId, deps);
-    }
+    // blocked acá es la sesión de Wellfound (vencida o ausente): frena solo
+    // el enriquecimiento, el listado no la necesita y sigue. Cuenta como
+    // intento resuelto porque nadie lo reintenta — si no, enrichment.done
+    // nunca llegaría y el spinner no se apagaría.
+    log(
+      result.error.kind === "blocked"
+        ? `[company-detail] slug=${data.slug} blocked — falta sesión válida, renovar storageState.json manualmente`
+        : `[company-detail] slug=${data.slug} error=${result.error.kind}`,
+    );
+    await deps.events.publish(data.searchId, {
+      type: "company.failed",
+      slug: data.slug,
+      reason: result.error.kind,
+    });
+    await finishEnrichmentAttempt(data.searchId, deps);
     return;
   }
 
