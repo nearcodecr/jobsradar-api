@@ -61,6 +61,9 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       headers["Access-Control-Allow-Origin"] = origin;
     }
     reply.raw.writeHead(200, headers);
+    // Sin un primer byte Node no manda los headers (ni CORS) hasta el primer
+    // evento; EventSource ignora las líneas de comentario.
+    reply.raw.write(": connected\n\n");
 
     // Solo "error" cierra acá — un "done" significa que search-list terminó
     // de paginar (sección 10), pero company-detail/job-detail pueden seguir

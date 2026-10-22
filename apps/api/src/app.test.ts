@@ -286,6 +286,18 @@ describe("GET /api/searches/:id/stream", () => {
     expect(response.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
   });
 
+  // Node no manda los headers (ni el de CORS) hasta el primer byte del body:
+  // sin eventos, el navegador esperaba hasta que Cloud Run cortaba la
+  // conexión y reportaba un error de CORS (visto en producción, 2026-10-21).
+  it("manda un comentario SSE apenas abre, antes de cualquier evento", async () => {
+    const app = testAppThatEndsImmediately();
+
+    const response = await app.inject({ method: "GET", url: "/api/searches/any-id/stream" });
+
+    expect(response.body.startsWith(":")).toBe(true);
+    expect(response.body.indexOf(":")).toBeLessThan(response.body.indexOf("data:"));
+  });
+
   it("no incluye Access-Control-Allow-Origin cuando el origin no está permitido", async () => {
     const app = testAppThatEndsImmediately();
 
